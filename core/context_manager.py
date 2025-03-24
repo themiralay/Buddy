@@ -1,89 +1,131 @@
-"""
-Manages conversation context and memory retrieval.
-"""
 import logging
-import datetime
-import json
+from typing import Dict, List, Optional, Any
+
+from memory.database import Database
+from memory.vector_store import VectorStore
 from utils.token_counter import count_tokens
 
 class ContextManager:
-    """Manages conversation context and memory for the assistant"""
+    """Manages conversation context and history."""
     
-    def __init__(self, database, vector_store, max_context_tokens=4000):
-        """Initialize context manager"""
-        self.logger = logging.getLogger(__name__)
-        self.db = database
-        self.vector_store = vector_store
-        self.max_context_tokens = max_context_tokens
-    
-    def get_context(self, query, max_recent=5, max_relevant=3):
-        """
-        Build context for the current conversation including:
-        - Recent conversations
-        - Semantically relevant past conversations
-        - Current date and time
-        """
-        context = {
-            "recent_conversations": [],
-            "relevant_memories": [],
-            "current_datetime": datetime.datetime.now().isoformat(),
-            "token_count": 0
-        }
+    def __init__(self, vector_store: VectorStore, database: Database, max_context_tokens: int = 4000):
+        """Initialize the context manager.
         
-        # Add recent conversations
-        recent = self.db.get_recent_conversations(max_recent)
-        for timestamp, user_input, assistant_response in recent:
-            conversation = f"User: {user_input}\nAssistant: {assistant_response}"
-            tokens = count_tokens(conversation)
+        Args:
+            vector_store: Vector store for semantic search
+            database: Database for storing conversations
+            max_context_tokens: Maximum number of tokens for context
+        """
+        self.vector_store = vector_store
+        self.database = database
+        self.max_context_tokens = max_context_tokens
+        self.logger = logging.getLogger("assistant.context")
+        
+    def get_context(self, user_id: str, current_message: str) -> Dict[str, Any]:
+        """Get the context for the current conversation.
+        
+        Args:
+            user_id: Identifier for the user
+            current_message: The current message being processed
             
-            if context["token_count"] + tokens <= self.max_context_tokens:
-                context["recent_conversations"].append({
-                    "timestamp": timestamp,
-                    "user_input": user_input,
-                    "assistant_response": assistant_response
-                })
-                context["token_count"] += tokens
+        Returns:
+            Dictionary containing conversation history and relevant context
+        """
+        # Get recent conversations from database
+        recent_history = self.database.get_recent_conversations(user_id, limit=10)
+        
+        # Perform semantic search for relevant past conversations
+        relevant_history = self.vector_store.search(current_message, limit=5)
+        
+        # Combine and format the context
+        formatted_history = self._format_conversations(recent_history)
+        formatted_relevant = self._format_conversations(relevant_history)
+        
+        # Ensure we don't exceed token limit
+        combined_context = self._trim_to_token_limit(formatted_history, formatted_relevant)
+        
+        return {
+            "recent_history": combined_context["recent_history"],
+            "relevant_history": combined_context["relevant_history"],
+            "timestamp": combined_context.get("timestamp")
+        }
+    
+    def update_memory(self, user_id: str, message: str, response: str) -> None:
+        """Update memory with the new conversation.
+        
+        Args:
+            user_id: Identifier for the user
+            message: The user's message
+            response: The assistant's response
+        """
+        # Store in database
+        conversation_id = self.database.store_conversation(
+            user_id=user_id,
+            message=message,
+            response=response
+        )
+        
+        # Store in vector database for semantic search
+        self.vector_store.add_text(
+            text=f"User: {message}\nAssistant: {response}",
+            metadata={
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "timestamp": self.database.get_timestamp()
+            }
+        )
+        
+        self.logger.debug(f"Updated memory for user {user_id}, conversation_id: {conversation_id}")
+    
+    def _format_conversations(self, conversations: List[Dict]) -> List[Dict]:
+        """Format conversations for context inclusion.
+        
+        Args:
+            conversations: List of conversation dictionaries
+            
+        Returns:
+            Formatted list of conversations
+        """
+        formatted = []
+        for conv in conversations:
+            formatted.append({
+                "user": conv.get("message", ""),
+                "assistant": conv.get("response", ""),
+                "timestamp": conv.get("timestamp", "")
+            })
+        return formatted
+    
+    def _trim_to_token_limit(self, recent_history: List[Dict], relevant_history: List[Dict]) -> Dict:
+        """Trim context to fit within token limit.
+        
+        Args:
+            recent_history: Recent conversation history
+            relevant_history: Semantically relevant history
+            
+        Returns:
+            Trimmed context dictionary
+        """
+        # Start with most relevant conversations
+        result = {"recent_history": [], "relevant_history": []}
+        token_count = 0
+        
+        # First add relevant history
+        for conv in relevant_history:
+            conv_tokens = count_tokens(f"User: {conv.get('user')}\nAssistant: {conv.get('assistant')}")
+            if token_count + conv_tokens <= self.max_context_tokens:
+                result["relevant_history"].append(conv)
+                token_count += conv_tokens
+            else:
+                break
+                
+        # Then add recent history if there's space
+        for conv in recent_history:
+            conv_tokens = count_tokens(f"User: {conv.get('user')}\nAssistant: {conv.get('assistant')}")
+            if token_count + conv_tokens <= self.max_context_tokens:
+                result["recent_history"].append(conv)
+                token_count += conv_tokens
             else:
                 break
         
-        # Find semantically relevant past conversations
-        if query:
-            relevant_results = self.vector_store.similarity_search(query, max_relevant)
-            for doc in relevant_results:
-                content = doc.page_content
-                tokens = count_tokens(content)
-                
-                if context["token_count"] + tokens <= self.max_context_tokens:
-                    context["relevant_memories"].append({
-                        "content": content,
-                        "metadata": doc.metadata
-                    })
-                    context["token_count"] += tokens
-                else:
-                    break
-        
-        self.logger.debug(f"Built context with {len(context['recent_conversations'])} recent and " 
-                         f"{len(context['relevant_memories'])} relevant conversations " 
-                         f"({context['token_count']} tokens)")
-        
-        return context
-    
-    def update_memory(self, user_input, assistant_response, emotion=None):
-        """Store conversation in both database and vector store"""
-        # Add to database
-        timestamp = datetime.datetime.now().isoformat()
-        self.db.add_conversation(timestamp, user_input, assistant_response, emotion)
-        
-        # Add to vector store for semantic search
-        combined_text = f"User: {user_input}\nAssistant: {assistant_response}"
-        metadata = {
-            "timestamp": timestamp,
-            "type": "conversation"
-        }
-        
-        if emotion:
-            metadata["emotion"] = emotion
-            
-        self.vector_store.add_texts([combined_text], [metadata])
-        
-        return timestamp
+        self.logger.debug(f"Context built with {token_count} tokens, {len(result['recent_history'])} recent and {len(result['relevant_history'])} relevant conversations")
+        return result

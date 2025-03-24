@@ -1,206 +1,296 @@
-"""
-SQLite database for persistent storage.
-"""
-import os
 import sqlite3
-import logging
 import json
+import logging
+import os
 import datetime
-import shutil
+from typing import Dict, List, Optional, Any, Union
 
 class Database:
-    """SQLite database for persistent storage"""
+    """SQLite database for persistent storage."""
     
-    def __init__(self, db_path):
-        """Initialize database connection"""
-        self.logger = logging.getLogger(__name__)
-        self.db_path = db_path
+    def __init__(self, db_path: str = "memory/data.db"):
+        """Initialize the database.
         
-        # Ensure directory exists
+        Args:
+            db_path: Path to the SQLite database file
+        """
+        # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        # Connect to database
-        self.conn = sqlite3.connect(db_path)
-        self._setup_database()
+        self.db_path = db_path
+        self.logger = logging.getLogger("assistant.database")
+        
+        # Initialize the database
+        self._init_db()
         
         self.logger.info(f"Database initialized at {db_path}")
     
-    def _setup_database(self):
-        """Set up the database tables"""
-        cursor = self.conn.cursor()
-        
-        # Create conversations table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY,
-            timestamp TEXT,
-            user_input TEXT,
-            assistant_response TEXT,
-            emotion TEXT
-        )
-        ''')
-        
-        # Create user_profile table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_profile (
-            id INTEGER PRIMARY KEY,
-            profile_data TEXT,
-            updated_at TEXT
-        )
-        ''')
-        
-        # Create user_notes table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_notes (
-            id INTEGER PRIMARY KEY,
-            title TEXT,
-            content TEXT,
-            category TEXT,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
-        
-        # Create tasks table
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY,
-            description TEXT,
-            due_date TEXT,
-            status TEXT,
-            created_at TEXT,
-            updated_at TEXT
-        )
-        ''')
-        
-        self.conn.commit()
-    
-    def add_conversation(self, timestamp, user_input, assistant_response, emotion=None):
-        """Add a conversation to the database"""
-        cursor = self.conn.cursor()
-        
-        cursor.execute(
-            "INSERT INTO conversations (timestamp, user_input, assistant_response, emotion) VALUES (?, ?, ?, ?)",
-            (timestamp, user_input, assistant_response, emotion)
-        )
-        
-        self.conn.commit()
-        return cursor.lastrowid
-    
-    def get_recent_conversations(self, limit=10):
-        """Get recent conversations from database"""
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT timestamp, user_input, assistant_response FROM conversations ORDER BY timestamp DESC LIMIT ?",
-            (limit,)
-        )
-        return cursor.fetchall()
-    
-    def get_conversation_count(self):
-        """Get the total number of conversations"""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM conversations")
-        return cursor.fetchone()[0]
-    
-    def get_user_profile(self):
-        """Get the most recent user profile"""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT profile_data FROM user_profile ORDER BY updated_at DESC LIMIT 1")
-        result = cursor.fetchone()
-        
-        if result:
-            return json.loads(result[0])
-        return None
-    
-    def save_user_profile(self, profile):
-        """Save user profile to database"""
-        cursor = self.conn.cursor()
-        timestamp = datetime.datetime.now().isoformat()
-        
-        cursor.execute(
-            "INSERT INTO user_profile (profile_data, updated_at) VALUES (?, ?)",
-            (json.dumps(profile), timestamp)
-        )
-        
-        self.conn.commit()
-        return cursor.lastrowid
-    
-    def add_note(self, title, content, category="general"):
-        """Add a user note to the database"""
-        cursor = self.conn.cursor()
-        timestamp = datetime.datetime.now().isoformat()
-        
-        cursor.execute(
-            "INSERT INTO user_notes (title, content, category, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (title, content, category, timestamp, timestamp)
-        )
-        
-        self.conn.commit()
-        return cursor.lastrowid
-    
-    def get_notes(self, category=None, limit=10):
-        """Get user notes from database"""
-        cursor = self.conn.cursor()
-        
-        if category:
-            cursor.execute(
-                "SELECT id, title, content, category, created_at FROM user_notes WHERE category = ? ORDER BY updated_at DESC LIMIT ?",
-                (category, limit)
+    def _init_db(self):
+        """Initialize the database schema if it doesn't exist."""
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            
+            # Create conversations table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                response TEXT NOT NULL,
+                timestamp TEXT NOT NULL
             )
-        else:
+            ''')
+            
+            # Create user profiles table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_profiles (
+                user_id TEXT PRIMARY KEY,
+                profile_data TEXT NOT NULL,
+                last_updated TEXT NOT NULL
+            )
+            ''')
+            
+            # Create tasks table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                description TEXT NOT NULL,
+                due_date TEXT,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending'
+            )
+            ''')
+            
+            conn.commit()
+    
+    def _connect(self):
+        """Create a database connection."""
+        return sqlite3.connect(self.db_path)
+    
+    def store_conversation(self, user_id: str, message: str, response: str) -> int:
+        """Store a conversation in the database.
+        
+        Args:
+            user_id: Identifier for the user
+            message: The user's message
+            response: The assistant's response
+            
+        Returns:
+            ID of the stored conversation
+        """
+        timestamp = self.get_timestamp()
+        
+        with self._connect() as conn:
+            cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, title, content, category, created_at FROM user_notes ORDER BY updated_at DESC LIMIT ?",
-                (limit,)
+                '''
+                INSERT INTO conversations (user_id, message, response, timestamp)
+                VALUES (?, ?, ?, ?)
+                ''',
+                (user_id, message, response, timestamp)
+            )
+            conn.commit()
+            return cursor.lastrowid
+    
+    def get_recent_conversations(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent conversations for a user.
+        
+        Args:
+            user_id: Identifier for the user
+            limit: Maximum number of conversations to retrieve
+            
+        Returns:
+            List of conversation dictionaries
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT id, message, response, timestamp
+                FROM conversations
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                ''',
+                (user_id, limit)
             )
             
-        return cursor.fetchall()
+            rows = cursor.fetchall()
+            # Convert rows to dictionaries and reverse to get chronological order
+            conversations = [dict(row) for row in rows]
+            conversations.reverse()
+            
+            return conversations
     
-    def add_task(self, description, due_date=None, status="pending"):
-        """Add a task to the database"""
-        cursor = self.conn.cursor()
-        timestamp = datetime.datetime.now().isoformat()
+    def store_user_profile(self, user_id: str, profile_data: Dict[str, Any]) -> bool:
+        """Store a user profile in the database.
         
-        cursor.execute(
-            "INSERT INTO tasks (description, due_date, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (description, due_date, status, timestamp, timestamp)
-        )
+        Args:
+            user_id: Identifier for the user
+            profile_data: Profile data dictionary
+            
+        Returns:
+            True if successful
+        """
+        timestamp = self.get_timestamp()
+        profile_json = json.dumps(profile_data)
         
-        self.conn.commit()
-        return cursor.lastrowid
-    
-    def get_tasks(self, status=None, limit=10):
-        """Get tasks from database"""
-        cursor = self.conn.cursor()
-        
-        if status:
+        with self._connect() as conn:
+            cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, description, due_date, status, created_at FROM tasks WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-                (status, limit)
+                '''
+                INSERT OR REPLACE INTO user_profiles (user_id, profile_data, last_updated)
+                VALUES (?, ?, ?)
+                ''',
+                (user_id, profile_json, timestamp)
             )
-        else:
+            conn.commit()
+            return True
+    
+    def get_user_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get a user profile from the database.
+        
+        Args:
+            user_id: Identifier for the user
+            
+        Returns:
+            User profile dictionary or None if not found
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, description, due_date, status, created_at FROM tasks ORDER BY created_at DESC LIMIT ?",
-                (limit,)
+                '''
+                SELECT profile_data FROM user_profiles
+                WHERE user_id = ?
+                ''',
+                (user_id,)
             )
             
-        return cursor.fetchall()
+            row = cursor.fetchone()
+            if row:
+                return json.loads(row['profile_data'])
+            return None
     
-    def backup(self, backup_path):
-        """Create a backup of the database"""
-        # Close current connection to ensure all data is written
-        self.conn.close()
+    def store_task(self, user_id: str, task: Dict[str, Any]) -> int:
+        """Store a task in the database.
         
-        # Create backup
-        shutil.copy2(self.db_path, backup_path)
-        
-        # Reopen connection
-        self.conn = sqlite3.connect(self.db_path)
-        
-        self.logger.info(f"Database backed up to {backup_path}")
-        return backup_path
+        Args:
+            user_id: Identifier for the user
+            task: Task dictionary
+            
+        Returns:
+            ID of the stored task
+        """
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                INSERT INTO tasks (user_id, description, due_date, created_at, status)
+                VALUES (?, ?, ?, ?, ?)
+                ''',
+                (
+                    user_id,
+                    task.get('description', ''),
+                    task.get('due_date'),
+                    task.get('created_at', self.get_timestamp()),
+                    task.get('status', 'pending')
+                )
+            )
+            conn.commit()
+            return cursor.lastrowid
     
-    def close(self):
-        """Close the database connection"""
-        if self.conn:
-            self.conn.close()
-            self.conn = None
+    def get_tasks(self, user_id: str, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get tasks for a user.
+        
+        Args:
+            user_id: Identifier for the user
+            status: Filter by status ('pending', 'completed')
+            
+        Returns:
+            List of task dictionaries
+        """
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            if status:
+                cursor.execute(
+                    '''
+                    SELECT * FROM tasks
+                    WHERE user_id = ? AND status = ?
+                    ORDER BY created_at DESC
+                    ''',
+                    (user_id, status)
+                )
+            else:
+                cursor.execute(
+                    '''
+                    SELECT * FROM tasks
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    ''',
+                    (user_id,)
+                )
+            
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    def update_task_status(self, task_id: int, status: str) -> bool:
+        """Update the status of a task.
+        
+        Args:
+            task_id: Task identifier
+            status: New status ('pending', 'completed')
+            
+        Returns:
+            True if successful, False if task not found
+        """
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                UPDATE tasks
+                SET status = ?
+                WHERE id = ?
+                ''',
+                (status, task_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def get_due_tasks(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get tasks that are due today or overdue.
+        
+        Args:
+            user_id: Identifier for the user
+            
+        Returns:
+            List of due task dictionaries
+        """
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                '''
+                SELECT * FROM tasks
+                WHERE user_id = ? AND status = 'pending' AND due_date <= ?
+                ORDER BY due_date ASC
+                ''',
+                (user_id, today)
+            )
+            
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    def get_timestamp(self) -> str:
+        """Get the current timestamp in ISO format.
+        
+        Returns:
+            Timestamp string
+        """
+        return datetime.datetime.now().isoformat()

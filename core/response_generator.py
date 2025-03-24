@@ -1,136 +1,127 @@
-"""
-Generates responses using LLM integration.
-"""
 import logging
-import json
+from typing import Dict, Any, Optional
+
 from integrations.openai_client import OpenAIClient
 
 class ResponseGenerator:
-    """Generates assistant responses using LLM"""
+    """Generates responses using AI models."""
     
-    def __init__(self, context_manager, profile_manager, llm_config):
-        """Initialize response generator"""
-        self.logger = logging.getLogger(__name__)
-        self.context_manager = context_manager
-        self.profile_manager = profile_manager
-        self.llm_config = llm_config
-        self.openai = OpenAIClient()
+    def __init__(self, ai_client: OpenAIClient):
+        """Initialize the response generator.
+        
+        Args:
+            ai_client: Client for AI model API
+        """
+        self.ai_client = ai_client
+        self.logger = logging.getLogger("assistant.response")
     
-    def generate(self, user_input, context, emotion=None):
-        """Generate a response to user input"""
-        # Prepare the messages for the API
-        messages = [
-            {"role": "system", "content": self.llm_config.get("system_prompt", "")}
-        ]
+    def generate(self, message: str, context: Dict[str, Any], user_profile: Dict[str, Any]) -> str:
+        """Generate a response using the AI model.
         
-        # Add user profile
-        user_profile = self.profile_manager.get_profile()
-        if user_profile:
-            profile_str = json.dumps(user_profile, indent=2)
-            messages.append({
-                "role": "system", 
-                "content": f"User profile information:\n{profile_str}"
-            })
-        
-        # Add current datetime
-        if "current_datetime" in context:
-            messages.append({
-                "role": "system", 
-                "content": f"Current date and time: {context['current_datetime']}"
-            })
-        
-        # Add recent conversation history
-        if context.get("recent_conversations"):
-            recent_convs = []
-            for conv in context["recent_conversations"]:
-                recent_convs.append(f"User: {conv['user_input']}")
-                recent_convs.append(f"Assistant: {conv['assistant_response']}")
+        Args:
+            message: The user's message
+            context: Conversation context and history
+            user_profile: The user's profile information
             
-            recent_history = "\n".join(recent_convs)
-            messages.append({
-                "role": "system", 
-                "content": f"Recent conversation history:\n{recent_history}"
-            })
+        Returns:
+            Generated response text
+        """
+        # Create system message with context and profile information
+        system_message = self._create_system_message(context, user_profile)
         
-        # Add relevant past memories
-        if context.get("relevant_memories"):
-            relevant_memories = []
-            for memory in context["relevant_memories"]:
-                relevant_memories.append(memory["content"])
-            
-            memories_text = "\n---\n".join(relevant_memories)
-            messages.append({
-                "role": "system", 
-                "content": f"Relevant past conversations:\n{memories_text}"
-            })
+        # Build conversation history for the AI
+        conversation = self._build_conversation_history(context)
         
-        # Add user emotion if available
-        if emotion:
-            messages.append({
-                "role": "system", 
-                "content": f"User's current emotional state appears to be: {emotion}"
-            })
-        
-        # Add the user's message
-        messages.append({"role": "user", "content": user_input})
+        # Add current message
+        conversation.append({"role": "user", "content": message})
         
         # Generate response
-        try:
-            response = self.openai.chat_completion(
-                messages=messages,
-                model=self.llm_config.get("default_model", "gpt-4-turbo"),
-                temperature=self.llm_config.get("temperature", 0.7),
-                max_tokens=self.llm_config.get("max_tokens", 1024)
-            )
-            
-            return response
-            
-        except Exception as e:
-            self.logger.error(f"Error generating response: {e}", exc_info=True)
-            # Use fallback model if configured
-            if "fallback_model" in self.llm_config:
-                try:
-                    self.logger.info(f"Trying fallback model: {self.llm_config['fallback_model']}")
-                    response = self.openai.chat_completion(
-                        messages=messages,
-                        model=self.llm_config.get("fallback_model"),
-                        temperature=self.llm_config.get("temperature", 0.7),
-                        max_tokens=self.llm_config.get("max_tokens", 1024)
-                    )
-                    return response
-                except Exception as e2:
-                    self.logger.error(f"Error with fallback model: {e2}", exc_info=True)
-            
-            return "I'm sorry, I'm having trouble generating a response right now. Could you try again?"
+        self.logger.debug("Generating response with AI model")
+        response = self.ai_client.chat_completion(
+            system_message=system_message,
+            messages=conversation
+        )
+        
+        return response
     
-    def extract_tasks(self, user_input, assistant_response):
-        """Extract tasks or reminders from the conversation"""
-        prompt = f"""
-        Identify any action items, tasks, or commitments made in this conversation.
-        Format as a JSON list of objects with 'task', 'due_date' (if specified), and 'for_whom'.
-        Return an empty list if none found.
+    def _create_system_message(self, context: Dict[str, Any], user_profile: Dict[str, Any]) -> str:
+        """Create a system message with instructions for the AI.
         
-        User: {user_input}
-        Assistant: {assistant_response}
+        Args:
+            context: Conversation context
+            user_profile: User profile information
+            
+        Returns:
+            Formatted system message
         """
+        # Start with basic instructions
+        system_message = "You are ICEx Buddy, a helpful and intelligent personal assistant. "
         
-        try:
-            response = self.openai.complete(
-                system_message="Extract action items from text",
-                user_message=prompt,
-                temperature=0.1,
-                max_tokens=500
-            )
+        # Add profile-based customization
+        if user_profile:
+            if "preferences" in user_profile:
+                prefs = user_profile["preferences"]
+                
+                if "response_length" in prefs:
+                    if prefs["response_length"] == "concise":
+                        system_message += "Keep your responses brief and to the point. "
+                    else:
+                        system_message += "Provide detailed and thorough responses. "
+                        
+                if "formality" in prefs:
+                    if prefs["formality"] == "informal":
+                        system_message += "Use a casual, friendly tone. "
+                    else:
+                        system_message += "Maintain a professional tone. "
+                        
+                if "humor" in prefs:
+                    if prefs["humor"] == "humorous":
+                        system_message += "Include appropriate humor in your responses. "
+                    else:
+                        system_message += "Maintain a serious demeanor. "
             
-            content = response.strip()
+            if "interests" in user_profile and user_profile["interests"]:
+                interests = ", ".join(user_profile["interests"][:5])  # Limit to 5 interests
+                system_message += f"The user has expressed interest in: {interests}. "
+        
+        # Add memory instructions
+        system_message += (
+            "You have access to conversation history to provide continuity. "
+            "Reference relevant past interactions when helpful. "
+            "Always be helpful, accurate, and respectful."
+        )
+        
+        return system_message
+    
+    def _build_conversation_history(self, context: Dict[str, Any]) -> list:
+        """Build conversation history from context for the AI.
+        
+        Args:
+            context: Conversation context with history
             
-            # Extract JSON list
-            if "[" in content and "]" in content:
-                start = content.find("[")
-                end = content.rfind("]") + 1
-                json_str = content[start:end]
-                return json.loads(json_str)
-            return []
-        except Exception as e:
-            self.logger.error(f"Error extracting tasks: {e}", exc_info=True)
-            return []
+        Returns:
+            List of messages in format for AI completion
+        """
+        conversation = []
+        
+        # Add recent history
+        if "recent_history" in context:
+            for entry in context["recent_history"]:
+                conversation.append({"role": "user", "content": entry.get("user", "")})
+                conversation.append({"role": "assistant", "content": entry.get("assistant", "")})
+        
+        # Add relevant history - only if significantly different from recent history
+        if "relevant_history" in context:
+            for entry in context["relevant_history"]:
+                # Skip if this exact exchange is already in the conversation
+                if any(msg["role"] == "user" and msg["content"] == entry.get("user", "") for msg in conversation):
+                    continue
+                    
+                # Add a marker to indicate this is from previous relevant conversations
+                user_content = f"[From previous conversation] {entry.get('user', '')}"
+                assistant_content = entry.get('assistant', '')
+                
+                conversation.append({"role": "user", "content": user_content})
+                conversation.append({"role": "assistant", "content": assistant_content})
+        
+        return conversation

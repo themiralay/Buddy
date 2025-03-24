@@ -1,105 +1,77 @@
+#!/usr/bin/env python3
 """
-Entry point for the ICEx Buddy personal assistant.
+ICEx Buddy - An intelligent assistant for ICEx
+
+This is the main entry point for the application.
 """
 import os
-import logging
+import sys
+import argparse
 from dotenv import load_dotenv
-from core.assistant import PersonalAssistant
+
+# Core components
+from core.assistant import Assistant
+from core.config import Config
+
+# Interfaces
+from interfaces.cli import CLIInterface
+from interfaces.web_ui import WebInterface
+from interfaces.api import APIInterface
+from interfaces.whatsapp import WhatsAppInterface
+
+# Utilities
 from utils.logger import setup_logger
 
-def main():
-    # Load environment variables
-    load_dotenv()
-    
-    # Setup logging
-    setup_logger()
-    logger = logging.getLogger(__name__)
-    logger.info("Starting ICEx Buddy")
-    
-    # Initialize assistant
-    assistant = PersonalAssistant()
-    if 'assistant' in globals() and assistant:
-        assistant.close()
-    
-    print("Goodbye!")
-    sys.exit(0)
-
 def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='ICEx Buddy Personal Assistant')
-    parser.add_argument('--config', type=str, help='Path to config file')
-    parser.add_argument('--data-dir', type=str, help='Path to data directory')
-    parser.add_argument('--log-level', type=str, default='INFO', 
-                      choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                      help='Logging level')
-    parser.add_argument('--backup', action='store_true', help='Create a backup before starting')
-    parser.add_argument('--restore', type=str, help='Restore from backup file')
-    parser.add_argument('--web', action='store_true', help='Start web interface')
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="ICEx Buddy - An intelligent assistant")
+    parser.add_argument("--config", type=str, default="config.yaml", 
+                        help="Path to configuration file")
+    parser.add_argument("--debug", action="store_true", 
+                        help="Enable debug mode")
+    parser.add_argument("--interface", type=str, choices=["cli", "web", "api", "whatsapp"],
+                        default="cli", help="Interface to start")
     return parser.parse_args()
 
 def main():
+    """Main application entry point."""
     # Parse arguments
     args = parse_arguments()
     
     # Load environment variables
     load_dotenv()
     
-    # Override environment variables with command line arguments if provided
-    if args.data_dir:
-        os.environ['DATA_DIR'] = args.data_dir
-    
-    # Set default data directory if not specified
-    if not os.getenv('DATA_DIR'):
-        os.environ['DATA_DIR'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
-    
-    # Load configuration
-    config = load_config(args.config)
-    
-    # Ensure all required directories exist
-    ensure_directories(config)
-    
     # Setup logging
-    setup_logger(args.log_level)
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting ICEx Buddy v{config['system']['version']}")
-    logger.info(f"Data directory: {os.getenv('DATA_DIR')}")
-    
-    # Register signal handlers
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
+    logger = setup_logger("icex_buddy", debug=args.debug)
+    logger.info("Starting ICEx Buddy...")
     
     try:
+        # Load configuration
+        config = Config(args.config)
+        logger.info(f"Loaded configuration from {args.config}")
+        
         # Initialize assistant
-        assistant = PersonalAssistant(config_path=args.config)
+        assistant = Assistant(config)
+        logger.info("Assistant initialized")
         
-        # Create backup if requested
-        if args.backup:
-            backup_path = assistant.create_backup()
-            logger.info(f"Backup created at: {backup_path}")
+        # Start the requested interface
+        if args.interface == "cli":
+            interface = CLIInterface(assistant, config)
+        elif args.interface == "web":
+            interface = WebInterface(assistant, config)
+        elif args.interface == "api":
+            interface = APIInterface(assistant, config)
+        elif args.interface == "whatsapp":
+            interface = WhatsAppInterface(assistant, config)
+            
+        logger.info(f"Starting {args.interface} interface")
+        interface.start()
         
-        # Restore from backup if requested
-        if args.restore:
-            assistant.restore_from_backup(args.restore)
-            logger.info(f"Restored from backup: {args.restore}")
-        
-        # Start web interface if requested
-        if args.web:
-            from ui.web.app import start_web_server
-            start_web_server(assistant)
-        else:
-            # Run interactive mode
-            assistant.run_interactive()
-    except KeyboardInterrupt:
-        logger.info("Shutting down due to user interrupt")
     except Exception as e:
-        logger.error(f"Error in main application: {e}", exc_info=True)
-    finally:
-        # Clean up resources
-        try:
-            assistant.close()
-        except:
-            pass
-        logger.info("ICEx Buddy shutdown complete")
+        logger.error(f"Error starting application: {str(e)}")
+        import traceback
+        logger.debug(traceback.format_exc())
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

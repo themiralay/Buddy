@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ICEx Buddy - Your Personal AI Assistant</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" href="/static/img/favicon.ico">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>ICEx Buddy</h1>
+            <p>Your Personal AI Assistant</p>
+        </header>
+        
+        <main>
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <div class="message assistant">
+                        <div class="avatar">🤖</div>
+                        <div class="content">
+                            <p>Hello! I'm ICEx Buddy, your personal AI assistant. How can I help you today?</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chat-input">
+                    <textarea id="user-input" placeholder="Type your message here..." rows="2"></textarea>
+                    <div class="input-buttons">
+                        <button id="voice-button" title="Voice Input">🎤</button>
+                        <button id="send-button">Send</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="tasks-panel">
+                <h2>Tasks</h2>
+                <div class="tasks-filter">
+                    <button class="active" data-filter="all">All</button>
+                    <button data-filter="pending">Pending</button>
+                    <button data-filter="completed">Completed</button>
+                </div>
+                <div class="tasks-list" id="tasks-list">
+                    <p class="no-tasks">No tasks yet. Ask me to remind you about something!</p>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>ICEx Buddy &copy; 2025 | Privacy Policy | Help</p>
+        </footer>
+    </div>
+    
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

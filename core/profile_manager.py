@@ -1,131 +1,137 @@
-"""
-Manages user profile information.
-"""
 import logging
-import json
-import datetime
-from integrations.openai_client import OpenAIClient
+from typing import Dict, Optional, Any
+
+from memory.database import Database
 
 class ProfileManager:
-    """Manages user profile data"""
+    """Builds and maintains user profiles based on interactions."""
     
-    def __init__(self, database):
-        """Initialize profile manager"""
-        self.logger = logging.getLogger(__name__)
-        self.db = database
-        self.openai = OpenAIClient()
+    def __init__(self, database: Database):
+        """Initialize the profile manager.
+        
+        Args:
+            database: Database for storing user profiles
+        """
+        self.database = database
+        self.logger = logging.getLogger("assistant.profile")
     
-    def get_profile(self):
-        """Get the current user profile"""
-        profile = self.db.get_user_profile()
+    def get_profile(self, user_id: str) -> Dict[str, Any]:
+        """Get the user profile, creating a new one if it doesn't exist.
+        
+        Args:
+            user_id: Identifier for the user
+            
+        Returns:
+            User profile as a dictionary
+        """
+        profile = self.database.get_user_profile(user_id)
         
         if not profile:
-            # Create default profile
-            default_profile = {
-                "name": "User",
-                "created_at": datetime.datetime.now().isoformat(),
-                "personal_info": {},
+            # Create a new profile
+            self.logger.info(f"Creating new profile for user {user_id}")
+            profile = {
+                "user_id": user_id,
                 "preferences": {},
                 "interests": [],
-                "important_dates": {},
-                "relationships": {},
-                "memories": {}
+                "interaction_stats": {
+                    "total_messages": 0,
+                    "first_interaction": self.database.get_timestamp()
+                }
             }
-            
-            self.save_profile(default_profile)
-            return default_profile
-            
+            self.database.store_user_profile(user_id, profile)
+        
         return profile
     
-    def save_profile(self, profile):
-        """Save the user profile to database"""
-        return self.db.save_user_profile(profile)
-    
-    def update_profile(self, updates):
-        """Update user profile with new information"""
-        current_profile = self.get_profile()
+    def update_profile(self, user_id: str, message: str, response: str) -> None:
+        """Update the user profile based on the latest interaction.
         
-        # Create a deep copy of the current profile
-        updated_profile = json.loads(json.dumps(current_profile))
-        
-        # Apply updates
-        for key, value in updates.items():
-            if "." in key:
-                # Handle nested keys like "personal_info.birthday"
-                parts = key.split(".")
-                current = updated_profile
-                for part in parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
-                current[parts[-1]] = value
-            else:
-                updated_profile[key] = value
-        
-        # Save updated profile
-        self.save_profile(updated_profile)
-        return updated_profile
-    
-    def extract_profile_info(self, conversations):
-        """Extract profile information from conversations"""
-        if not conversations:
-            return {}
-            
-        # Format conversations for the prompt
-        formatted_convs = []
-        for conv in conversations:
-            if isinstance(conv, tuple) and len(conv) >= 3:
-                # If coming from database (timestamp, user_input, assistant_response)
-                formatted_convs.append(f"User: {conv[1]}")
-                formatted_convs.append(f"Assistant: {conv[2]}")
-            elif isinstance(conv, dict):
-                # If coming from context manager
-                formatted_convs.append(f"User: {conv.get('user_input', '')}")
-                formatted_convs.append(f"Assistant: {conv.get('assistant_response', '')}")
-                
-        combined_text = "\n".join(formatted_convs)
-        
-        prompt = f"""
-        Based on the following conversation, extract any personal information about the user
-        that should be remembered for future interactions. This could include preferences,
-        interests, important dates, relationships, or other personal details.
-        
-        Return the information as a JSON object with keys representing the profile fields,
-        or an empty JSON object if no relevant information is found.
-        
-        Example format:
-        {{
-            "personal_info.birthday": "April 15, 1985",
-            "interests": ["hiking", "photography", "cooking"],
-            "relationships.mother": "Maria"
-        }}
-        
-        Conversation:
-        {combined_text}
+        Args:
+            user_id: Identifier for the user
+            message: The user's message
+            response: The assistant's response
         """
+        profile = self.get_profile(user_id)
         
-        try:
-            response = self.openai.complete(
-                system_message="You extract user profile information from conversations.",
-                user_message=prompt,
-                temperature=0.2
-            )
+        # Update basic interaction stats
+        if "interaction_stats" not in profile:
+            profile["interaction_stats"] = {}
+        
+        profile["interaction_stats"]["total_messages"] = profile["interaction_stats"].get("total_messages", 0) + 1
+        profile["interaction_stats"]["last_interaction"] = self.database.get_timestamp()
+        
+        # Extract potential interests and preferences (simplified approach)
+        self._extract_interests(profile, message)
+        self._extract_preferences(profile, message)
+        
+        # Store updated profile
+        self.database.store_user_profile(user_id, profile)
+        self.logger.debug(f"Updated profile for user {user_id}")
+    
+    def _extract_interests(self, profile: Dict[str, Any], message: str) -> None:
+        """Extract potential interests from user messages.
+        
+        Args:
+            profile: The user profile to update
+            message: The user's message
+        """
+        # This is a simplified approach - in a real system, you'd use NLP or LLMs
+        # to extract interests more intelligently
+        
+        if "interests" not in profile:
+            profile["interests"] = []
             
-            content = response.strip()
-            
-            # Try to extract JSON from the response
-            try:
-                # Find JSON object in the text if it's embedded
-                if "{" in content and "}" in content:
-                    start = content.find("{")
-                    end = content.rfind("}") + 1
-                    json_str = content[start:end]
-                    return json.loads(json_str)
-                return {}
-            except json.JSONDecodeError:
-                self.logger.warning("Failed to parse profile information as JSON")
-                return {}
+        # For simplicity, we're just looking for "I like X" or "I love X" patterns
+        lower_message = message.lower()
+        interest_indicators = ["i like ", "i love ", "i enjoy ", "fan of "]
+        
+        for indicator in interest_indicators:
+            if indicator in lower_message:
+                start_idx = lower_message.find(indicator) + len(indicator)
+                end_idx = lower_message.find(".", start_idx)
+                if end_idx == -1:
+                    end_idx = len(lower_message)
                 
-        except Exception as e:
-            self.logger.error(f"Error extracting profile information: {e}", exc_info=True)
-            return {}
+                potential_interest = lower_message[start_idx:end_idx].strip()
+                if potential_interest and len(potential_interest) < 50:  # Reasonable length check
+                    if potential_interest not in profile["interests"]:
+                        profile["interests"].append(potential_interest)
+                        self.logger.debug(f"Extracted interest: {potential_interest}")
+    
+    def _extract_preferences(self, profile: Dict[str, Any], message: str) -> None:
+        """Extract potential preferences from user messages.
+        
+        Args:
+            profile: The user profile to update
+            message: The user's message
+        """
+        # Again, simplified approach
+        if "preferences" not in profile:
+            profile["preferences"] = {}
+            
+        # Very basic preference extraction
+        preference_indicators = {
+            "response_length": ["be brief", "keep it short", "detailed response", "elaborate"],
+            "formality": ["formal", "informal", "casual", "professional"],
+            "humor": ["be funny", "humor", "joke", "serious"]
+        }
+        
+        lower_message = message.lower()
+        
+        for category, phrases in preference_indicators.items():
+            for phrase in phrases:
+                if phrase in lower_message:
+                    if category == "response_length":
+                        if "brief" in phrase or "short" in phrase:
+                            profile["preferences"][category] = "concise"
+                        else:
+                            profile["preferences"][category] = "detailed"
+                    elif category == "formality":
+                        if "informal" in phrase or "casual" in phrase:
+                            profile["preferences"][category] = "informal"
+                        else:
+                            profile["preferences"][category] = "formal"
+                    elif category == "humor":
+                        if "funny" in phrase or "humor" in phrase or "joke" in phrase:
+                            profile["preferences"][category] = "humorous"
+                        else:
+                            profile["preferences"][category] = "serious"

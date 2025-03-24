@@ -1,51 +1,63 @@
-system:
+# ICEx Buddy Configuration
+
+assistant:
   name: "ICEx Buddy"
-  version: "0.1.0"
-  debug_mode: false
-
-paths:
-  database: "memory/assistant.db"
-  vector_store: "memory/vectors"
-  backups: "memory/backups"
-  logs: "logs"
-
-memory:
-  max_conversations: 1000
-  vector_dimensions: 1536
-  conversation_importance_threshold: 0.7
+  version: "1.0.0"
+  system_prompt: "You are ICEx Buddy, an intelligent assistant designed to help with ICEx operations. You provide accurate, helpful, and concise responses."
 
 llm:
-  default_model: "gpt-4-turbo"
-  fallback_model: "gpt-3.5-turbo"
-  temperature: 0.7
-  max_tokens: 1024
-  system_prompt: |
-    You are ICEx Buddy, a personal AI assistant with a natural, friendly personality.
-    You help the user with daily tasks, answer questions, provide recommendations, and engage in conversation.
-    You have access to the user's conversation history and profile information to provide personalized assistance.
-    Always strive to be helpful, relevant, and considerate of the user's preferences and needs.
-
-voice:
-  enabled: true
-  tts_provider: "elevenlabs"  # Options: elevenlabs, coqui
-  stt_provider: "whisper"     # Options: whisper, google
-  hotword: "buddy"
-  voice_id: "default"
-  sample_rate: 44100
+  provider: "openai"  # Options: openai, anthropic, local, huggingface
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    model: "gpt-4"
+    temperature: 0.7
+    max_tokens: 1000
+  anthropic:
+    api_key: "${ANTHROPIC_API_KEY}"
+    model: "claude-3-sonnet-20240229"
+    temperature: 0.7
+    max_tokens: 1000
+  local:
+    url: "http://localhost:11434"
+    model: "llama3"
+  huggingface:
+    api_key: "${HF_API_KEY}"
+    model: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    
+memory:
+  type: "vector"  # Options: simple, vector, sql
+  context_limit: 10  # Number of messages to include as context
+  vector:
+    embedding_model: "text-embedding-ada-002"
+    db_path: "./data/vector_store"
+  sql:
+    db_path: "./data/memory.sqlite"
+    
+web:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+  secret_key: "${WEB_SECRET_KEY}"
+  users:
+    admin: "pbkdf2:sha256:600000$abc123"  # Default: 'admin'
+    
+whatsapp:
+  enabled: false
+  phone_number: "${WHATSAPP_PHONE}"
+  webhook_url: "${WHATSAPP_WEBHOOK_URL}"
   
-agents:
-  enabled: true
-  types:
-    - "research"
-    - "planning"
-    - "creative"
-    - "reasoning"
-    - "personal"
+skills:
+  enabled:
+    - "weather"
+    - "calculator"
+    - "search"
+  weather:
+    api_key: "${WEATHER_API_KEY}"
+  search:
+    api_key: "${SEARCH_API_KEY}"
 
-integrations:
-  telegram:
-    enabled: false
-  discord:
-    enabled: false
-  whatsapp:
-    enabled: false
+logging:
+  level: "info"  # debug, info, warning, error
+  file: "./logs/icex_buddy.log"
+  max_size: 10485760  # 10 MB
+  backup_count: 5
