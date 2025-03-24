@@ -1,0 +1,51 @@
+system:
+  name: "ICEx Buddy"
+  version: "0.1.0"
+  debug_mode: false
+
+paths:
+  database: "memory/assistant.db"
+  vector_store: "memory/vectors"
+  backups: "memory/backups"
+  logs: "logs"
+
+memory:
+  max_conversations: 1000
+  vector_dimensions: 1536
+  conversation_importance_threshold: 0.7
+
+llm:
+  default_model: "gpt-4-turbo"
+  fallback_model: "gpt-3.5-turbo"
+  temperature: 0.7
+  max_tokens: 1024
+  system_prompt: |
+    You are ICEx Buddy, a personal AI assistant with a natural, friendly personality.
+    You help the user with daily tasks, answer questions, provide recommendations, and engage in conversation.
+    You have access to the user's conversation history and profile information to provide personalized assistance.
+    Always strive to be helpful, relevant, and considerate of the user's preferences and needs.
+
+voice:
+  enabled: true
+  tts_provider: "elevenlabs"  # Options: elevenlabs, coqui
+  stt_provider: "whisper"     # Options: whisper, google
+  hotword: "buddy"
+  voice_id: "default"
+  sample_rate: 44100
+  
+agents:
+  enabled: true
+  types:
+    - "research"
+    - "planning"
+    - "creative"
+    - "reasoning"
+    - "personal"
+
+integrations:
+  telegram:
+    enabled: false
+  discord:
+    enabled: false
+  whatsapp:
+    enabled: false

@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  icex-buddy:
+    build: .
+    container_name: icex-buddy
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"  # For web interface
+    environment:
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - TZ=Europe/Istanbul
